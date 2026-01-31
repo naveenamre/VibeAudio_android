@@ -4,11 +4,11 @@ plugins {
 
 android {
     namespace = "com.naksh.vibeaudio"
-    compileSdk = 34 // ⚠️ Change: 36 is experimental, 34 is stable. Use 34 to be safe.
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "com.naksh.vibeaudio"
-        minSdk = 24 // ⚠️ Change: Media Controls need minSdk 21+, bumping to 24 is safer.
+        minSdk = 24
         targetSdk = 34
         versionCode = 1
         versionName = "1.0"
@@ -38,8 +38,11 @@ dependencies {
     implementation(libs.androidx.activity)
     implementation(libs.androidx.constraintlayout)
 
-    // 🔥 NEW DEPENDENCY ADDED (Fixes the Error)
+    // 🔥 REQUIRED FOR NOTIFICATION & MEDIA CONTROLS
     implementation("androidx.media:media:1.7.0")
+
+    // 🔥 REQUIRED FOR OFFLINE FILE PLAYBACK (The Fix)
+    implementation("androidx.webkit:webkit:1.9.0")
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
