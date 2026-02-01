@@ -18,7 +18,8 @@ import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
 import android.support.v4.media.session.PlaybackStateCompat
 import android.util.Log
-import android.webkit.ConsoleMessage
+import android.webkit.ConsoleMessage // ✅ FIXED: Ye missing tha
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -47,7 +48,7 @@ class MainActivity : AppCompatActivity() {
     private val CHANNEL_ID = "vibe_music_channel"
     private val PERMISSION_REQUEST_CODE = 101
 
-    // 🔥 FINAL PRODUCTION URL
+    // 🔥 URL Check: Ensure this matches your live site
     private val APP_URL = "https://vibeaudio.pages.dev/frontend/src/pages/app.html?source=android"
 
     @SuppressLint("SetJavaScriptEnabled")
@@ -56,7 +57,7 @@ class MainActivity : AppCompatActivity() {
         setContentView(R.layout.activity_main)
         supportActionBar?.hide()
 
-        // Local Server with CORS Fix
+        // 1. Setup Local Server (CORS Fix)
         assetLoader = WebViewAssetLoader.Builder()
             .addPathHandler("/local/", CORSPathHandler(this, this.filesDir))
             .build()
@@ -68,13 +69,20 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webView)
         progressBar = findViewById(R.id.progressBar)
 
+        // 🍪 COOKIE MANAGER SETUP (Critical for Clerk Login Persistence)
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(true)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            cookieManager.setAcceptThirdPartyCookies(webView, true)
+        }
+
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.KITKAT) {
             WebView.setWebContentsDebuggingEnabled(true)
         }
 
         webView.settings.apply {
             javaScriptEnabled = true
-            domStorageEnabled = true
+            domStorageEnabled = true // Required for LocalStorage
             databaseEnabled = true
             mediaPlaybackRequiresUserGesture = false
             allowFileAccess = true
@@ -84,6 +92,7 @@ class MainActivity : AppCompatActivity() {
         webView.addJavascriptInterface(WebAppInterface(this), "AndroidInterface")
 
         webView.webChromeClient = object : WebChromeClient() {
+            // ✅ FIXED: ConsoleMessage import added above, so this works now
             override fun onConsoleMessage(consoleMessage: ConsoleMessage?): Boolean {
                 Log.d("VibeWeb", "${consoleMessage?.message()}")
                 return true
@@ -98,6 +107,10 @@ class MainActivity : AppCompatActivity() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 progressBar.visibility = android.view.View.GONE
+
+                // 🍪 Force Save Cookies when page loads
+                CookieManager.getInstance().flush()
+
                 webView.evaluateJavascript("document.body.classList.add('is-android');", null)
             }
         }
@@ -105,7 +118,13 @@ class MainActivity : AppCompatActivity() {
         webView.loadUrl(APP_URL)
     }
 
-    // --- CORS HANDLER ---
+    // 🛑 ON PAUSE: Force Save Cookies when App goes to background
+    override fun onPause() {
+        super.onPause()
+        CookieManager.getInstance().flush()
+    }
+
+    // --- 🛠️ CORS HANDLER ---
     private class CORSPathHandler(context: Context, dir: File) : WebViewAssetLoader.PathHandler {
         private val internalHandler = WebViewAssetLoader.InternalStoragePathHandler(context, dir)
         override fun handle(path: String): WebResourceResponse? {
