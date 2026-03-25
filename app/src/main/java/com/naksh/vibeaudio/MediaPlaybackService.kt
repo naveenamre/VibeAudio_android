@@ -14,7 +14,9 @@ import android.media.AudioAttributes
 import android.media.AudioFocusRequest
 import android.media.AudioManager
 import android.os.Build
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
 import android.os.PowerManager
 import android.support.v4.media.MediaMetadataCompat
 import android.support.v4.media.session.MediaSessionCompat
@@ -33,10 +35,12 @@ class MediaPlaybackService : Service() {
     private lateinit var mediaSession: MediaSessionCompat
 
     private val artworkExecutor: ExecutorService = Executors.newSingleThreadExecutor()
+    private val mainHandler = Handler(Looper.getMainLooper())
 
     private var audioFocusRequest: AudioFocusRequest? = null
     private var wakeLock: PowerManager.WakeLock? = null
     private var hasStartedForeground = false
+    private var isServiceDestroyed = false
 
     private var title: String = DEFAULT_TITLE
     private var artist: String = DEFAULT_ARTIST
@@ -61,6 +65,8 @@ class MediaPlaybackService : Service() {
 
     override fun onCreate() {
         super.onCreate()
+        serviceRunning = true
+        isServiceDestroyed = false
         notificationManager = getSystemService(NotificationManager::class.java)
         audioManager = getSystemService(AudioManager::class.java)
 
@@ -87,10 +93,13 @@ class MediaPlaybackService : Service() {
     }
 
     override fun onDestroy() {
+        serviceRunning = false
+        isServiceDestroyed = true
         try {
             unregisterReceiver(becomingNoisyReceiver)
         } catch (_: IllegalArgumentException) {
         }
+        mainHandler.removeCallbacksAndMessages(null)
         releaseWakeLock()
         abandonAudioFocus()
         mediaSession.release()
@@ -156,6 +165,7 @@ class MediaPlaybackService : Service() {
         artist = intent?.getStringExtra(EXTRA_ARTIST).orEmpty().ifBlank { DEFAULT_ARTIST }
         val newArtworkUrl = intent?.getStringExtra(EXTRA_ARTWORK_URL).orEmpty()
         isPlaying = intent?.getBooleanExtra(EXTRA_IS_PLAYING, isPlaying) ?: isPlaying
+        val artworkChanged = newArtworkUrl != artworkUrl
 
         if (isPlaying) {
             requestAudioFocus()
@@ -165,16 +175,35 @@ class MediaPlaybackService : Service() {
             abandonAudioFocus()
         }
 
-        if (newArtworkUrl != artworkUrl) {
+        if (artworkChanged) {
             artworkUrl = newArtworkUrl
             artworkBitmap = null
+        }
+
+        publishState()
+
+        if (artworkChanged && newArtworkUrl.isNotBlank()) {
             loadArtworkAsync(newArtworkUrl)
-        } else {
-            publishState()
         }
     }
 
     private fun publishState() {
+        if (Looper.myLooper() == Looper.getMainLooper()) {
+            publishStateOnMainThread()
+        } else {
+            mainHandler.post { publishStateOnMainThread() }
+        }
+    }
+
+    private fun publishStateOnMainThread() {
+        if (isServiceDestroyed) {
+            return
+        }
+
+        if (!isPlaying && !hasStartedForeground) {
+            return
+        }
+
         mediaSession.setMetadata(
             MediaMetadataCompat.Builder()
                 .putString(MediaMetadataCompat.METADATA_KEY_TITLE, title)
@@ -185,18 +214,19 @@ class MediaPlaybackService : Service() {
         mediaSession.setPlaybackState(buildPlaybackState(isPlaying))
 
         val notification = buildNotification()
-        if (!hasStartedForeground) {
+        if (isPlaying && !hasStartedForeground) {
             startForeground(NOTIFICATION_ID, notification)
             hasStartedForeground = true
-            if (!isPlaying) {
-                stopForeground(STOP_FOREGROUND_DETACH)
-                notificationManager.notify(NOTIFICATION_ID, notification)
-            }
             return
         }
 
         if (isPlaying) {
-            startForeground(NOTIFICATION_ID, notification)
+            if (hasStartedForeground) {
+                notificationManager.notify(NOTIFICATION_ID, notification)
+            } else {
+                startForeground(NOTIFICATION_ID, notification)
+                hasStartedForeground = true
+            }
         } else {
             stopForeground(STOP_FOREGROUND_DETACH)
             notificationManager.notify(NOTIFICATION_ID, notification)
@@ -288,6 +318,10 @@ class MediaPlaybackService : Service() {
                 }
             }.getOrNull()
 
+            if (isServiceDestroyed) {
+                return@execute
+            }
+
             artworkBitmap = bitmap
             publishState()
         }
@@ -362,7 +396,7 @@ class MediaPlaybackService : Service() {
             "$packageName:playback"
         ).apply {
             setReferenceCounted(false)
-            acquire()
+            acquire(WAKE_LOCK_TIMEOUT_MS)
         }
     }
 
@@ -373,6 +407,9 @@ class MediaPlaybackService : Service() {
 
     private fun stopServicePlayback() {
         isPlaying = false
+        artworkUrl = ""
+        artworkBitmap = null
+        hasStartedForeground = false
         releaseWakeLock()
         abandonAudioFocus()
         notificationManager.cancel(NOTIFICATION_ID)
@@ -408,6 +445,7 @@ class MediaPlaybackService : Service() {
         private const val NOTIFICATION_ID = 1
         private const val DEFAULT_TITLE = "VibeAudio"
         private const val DEFAULT_ARTIST = "Web Player"
+        private const val WAKE_LOCK_TIMEOUT_MS = 6 * 60 * 60 * 1000L
 
         private const val ACTION_UPDATE = "com.naksh.vibeaudio.action.UPDATE"
         private const val ACTION_PLAY = "com.naksh.vibeaudio.action.PLAY"
@@ -421,6 +459,11 @@ class MediaPlaybackService : Service() {
         private const val EXTRA_ARTIST = "extra_artist"
         private const val EXTRA_ARTWORK_URL = "extra_artwork_url"
         private const val EXTRA_IS_PLAYING = "extra_is_playing"
+
+        @Volatile
+        private var serviceRunning = false
+
+        fun isRunning(): Boolean = serviceRunning
 
         fun buildUpdateIntent(
             context: Context,

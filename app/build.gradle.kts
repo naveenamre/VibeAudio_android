@@ -39,10 +39,10 @@ dependencies {
     implementation(libs.androidx.constraintlayout)
 
     // 🔥 REQUIRED FOR NOTIFICATION & MEDIA CONTROLS
-    implementation("androidx.media:media:1.7.0")
+    implementation(libs.androidx.media)
 
     // 🔥 REQUIRED FOR OFFLINE FILE PLAYBACK (The Fix)
-    implementation("androidx.webkit:webkit:1.9.0")
+    implementation(libs.androidx.webkit)
 
     testImplementation(libs.junit)
     androidTestImplementation(libs.androidx.junit)
